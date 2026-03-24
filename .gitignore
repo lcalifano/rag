@@ -76,6 +76,7 @@ application-secret*.yml
 
 ### Misc ###
 HELP.md
+ROADMAP.md
 
 ### Garbage ###
 /src/

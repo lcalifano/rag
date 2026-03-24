@@ -43,7 +43,9 @@ services:
     build: ./api-gateway
     ports:
       - "8080:8080"
+      - "5005:5005"
     environment:
+      JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
       JWT_SECRET: ${JWT_SECRET}
       EUREKA_URL: http://eureka-server:8761/eureka/
     depends_on:
@@ -54,7 +56,9 @@ services:
     build: ./user-service
     ports:
       - "8081:8081"
+      - "5006:5005"
     environment:
+      JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
       JWT_SECRET: ${JWT_SECRET}
       DB_USERNAME: ${DB_USERNAME}
       DB_PASSWORD: ${DB_PASSWORD}
@@ -70,7 +74,9 @@ services:
     build: ./chat-service
     ports:
       - "8082:8082"
+      - "5007:5005"
     environment:
+      JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
       DB_USERNAME: ${DB_USERNAME}
       DB_PASSWORD: ${DB_PASSWORD}
       EUREKA_URL: http://eureka-server:8761/eureka/
@@ -86,7 +92,9 @@ services:
     build: ./document-service
     ports:
       - "8083:8083"
+      - "5008:5005"
     environment:
+      JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
       DB_USERNAME: ${DB_USERNAME}
       DB_PASSWORD: ${DB_PASSWORD}
       EUREKA_URL: http://eureka-server:8761/eureka/

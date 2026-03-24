@@ -4,12 +4,17 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.stereotype.Component;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 
-@Component
 public class UserContextFilter extends OncePerRequestFilter {
 
     @Override
@@ -21,12 +26,23 @@ public class UserContextFilter extends OncePerRequestFilter {
 
         if (userId != null) {
             UserContext.set(userId, username, roles);
+
+            List<SimpleGrantedAuthority> authorities = Collections.emptyList();
+            if (roles != null && !roles.isBlank()) {
+                authorities = Arrays.stream(roles.split(","))
+                        .map(role -> new SimpleGrantedAuthority("ROLE_" + role.trim()))
+                        .toList();
+            }
+
+            var authentication = new UsernamePasswordAuthenticationToken(username, null, authorities);
+            SecurityContextHolder.getContext().setAuthentication(authentication);
         }
 
         try {
             filterChain.doFilter(request, response);
         } finally {
             UserContext.clear();
+            SecurityContextHolder.clearContext();
         }
     }
 }
