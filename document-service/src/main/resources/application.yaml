@@ -23,6 +23,7 @@ app:
   chunk-overlap: 80
   similar-chunks: 5
   upload-dir: ${UPLOAD_DIR:./uploads}
+  embedding-batch-size: 10
 
 llm-service:
   url: ${LLM_SERVICE_URL:http://localhost:8000}

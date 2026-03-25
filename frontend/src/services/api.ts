@@ -2,6 +2,7 @@ import axios from 'axios';
 
 const api = axios.create({
   baseURL: '/api',
+  timeout: 300_000, // 5 minuti - Ollama su CPU puo essere lento
 });
 
 api.interceptors.request.use((config) => {
@@ -25,16 +26,26 @@ api.interceptors.response.use(
 );
 
 // Auth
+export const getSetupStatus = () =>
+  api.get<{ setupCompleted: boolean }>('/auth/setup-status');
+
 export const login = (username: string, password: string) =>
   api.post('/auth/login', { username, password });
 
 export const register = (username: string, email: string, password: string) =>
   api.post('/auth/register', { username, email, password });
 
+// User Profile
+export const getProfile = () => api.get('/users/me');
+export const updateProfile = (data: { username?: string; email?: string; newPassword?: string }) =>
+  api.put('/users/me', data);
+
 // Chat Sessions
 export const listSessions = () => api.get('/chat/sessions');
 export const createSession = (title: string) =>
   api.post('/chat/sessions', { title });
+export const updateSession = (sessionId: number, title: string) =>
+  api.put(`/chat/sessions/${sessionId}`, { title });
 export const getHistory = (sessionId: number) =>
   api.get(`/chat/sessions/${sessionId}/messages`);
 export const sendMessage = (sessionId: number, message: string) =>
@@ -50,6 +61,16 @@ export const uploadDocument = (file: File) => {
   });
 };
 export const deleteDocument = (id: number) => api.delete(`/documents/${id}`);
+export const downloadDocument = (id: number) =>
+  api.get(`/documents/${id}/download`, { responseType: 'blob' });
+
+// Admin
+export const adminGetAllUsers = () => api.get('/admin/users');
+export const adminUpdateUser = (id: number, data: {
+  username?: string; email?: string; newPassword?: string; roles?: string[];
+}) => api.put(`/admin/users/${id}`, data);
+export const adminDeleteUser = (id: number) => api.delete(`/admin/users/${id}`);
+export const adminGetAllDocuments = () => api.get('/documents/admin/all');
 
 // LLM Config
 export const getMyLlmConfigs = () => api.get('/model/settings/my');

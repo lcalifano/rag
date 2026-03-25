@@ -19,8 +19,16 @@ export interface ChatMessage {
   createdAt: string;
 }
 
+export interface UserProfile {
+  id: number;
+  username: string;
+  email: string;
+  roles: string[];
+}
+
 export interface Document {
   id: number;
+  userId?: number;
   originalFilename: string;
   fileSize: number;
   totalChunks: number;

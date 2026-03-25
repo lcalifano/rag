@@ -11,5 +11,5 @@ import java.util.Optional;
 public interface LlmRepository extends JpaRepository<LlmConfig, Long> {
     List<LlmConfig> findAllByUserId(Long userId);
     Optional<LlmConfig> findByUserIdAndIsActiveTrue(Long userId);
-    Boolean existsByUserIdAndProvider(Long userId, String provider);
+//    Boolean existsByUserIdAndProvider(Long userId, String provider);
 }

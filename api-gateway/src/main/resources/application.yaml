@@ -6,6 +6,9 @@ spring:
     name: API-GATEWAY
   cloud:
     gateway:
+      httpclient:
+        connect-timeout: 10000
+        response-timeout: 300s
       routes:
         - id: auth-service
           uri: lb://USER-SERVICE
@@ -16,6 +19,16 @@ spring:
           uri: lb://USER-SERVICE
           predicates:
             - Path=/model/**
+
+        - id: user-profile
+          uri: lb://USER-SERVICE
+          predicates:
+            - Path=/users/**
+
+        - id: admin
+          uri: lb://USER-SERVICE
+          predicates:
+            - Path=/admin/**
 
         - id: chat-service
           uri: lb://CHAT-SERVICE

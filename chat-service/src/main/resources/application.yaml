@@ -16,6 +16,7 @@ spring:
 
 app:
   similar-chunks: 5
+  chat-temperature: 0.7
 
 llm-service:
   url: ${LLM_SERVICE_URL:http://localhost:8000}

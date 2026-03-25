@@ -13,6 +13,7 @@ import java.time.LocalDateTime;
 @Builder
 public class DocumentDto {
     private Long id;
+    private Long userId;
     private String originalFilename;
     private Long fileSize;
     private Integer totalChunks;

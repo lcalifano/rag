@@ -30,6 +30,13 @@ public class AuthService {
     private final JwtService jwtService;
     private final AuthenticationManager authenticationManager;
 
+    /**
+     * Controlla se il sistema è già stato configurato (esiste almeno un utente).
+     */
+    public boolean isSetupCompleted() {
+        return userRepository.count() > 0;
+    }
+
     public AuthResponse register(RegisterRequest request) {
         if (userRepository.existsByUsername(request.getUsername())) {
             throw new UserAlreadyExistsException("Username già utilizzato: " + request.getUsername());
@@ -39,6 +46,8 @@ public class AuthService {
             throw new UserAlreadyExistsException("Email già utilizzata: " + request.getEmail());
         }
 
+        boolean isFirstUser = userRepository.count() == 0;
+
         Role userRole = roleRepository.findByName("ROLE_USER")
                 .orElseGet(() -> roleRepository.save(
                         Role.builder()
@@ -46,11 +55,24 @@ public class AuthService {
                                 .build()
                 ));
 
+        List<Role> roles = new ArrayList<>(List.of(userRole));
+
+        // Il primo utente registrato diventa automaticamente admin
+        if (isFirstUser) {
+            Role adminRole = roleRepository.findByName("ROLE_ADMIN")
+                    .orElseGet(() -> roleRepository.save(
+                            Role.builder()
+                                    .name("ROLE_ADMIN")
+                                    .build()
+                    ));
+            roles.add(adminRole);
+        }
+
         User user = User.builder()
                 .username(request.getUsername())
                 .email(request.getEmail())
                 .password(passwordEncoder.encode(request.getPassword()))
-                .roles(new ArrayList<>(List.of(userRole)))
+                .roles(roles)
                 .build();
 
         userRepository.save(user);
@@ -61,7 +83,9 @@ public class AuthService {
                 .token(token)
                 .username(user.getUsername())
                 .email(user.getEmail())
-                .message("Registrazione completata con successo")
+                .message(isFirstUser
+                        ? "Setup completato! Sei stato registrato come amministratore."
+                        : "Registrazione completata con successo")
                 .build();
     }
 

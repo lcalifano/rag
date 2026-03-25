@@ -1,8 +1,6 @@
 package com.documents.chatservice.services;
 
-import com.documents.chatservice.clients.DocumentServiceClient;
-import com.documents.chatservice.clients.LlmServiceClient;
-import com.documents.chatservice.clients.UserServiceClient;
+import com.documents.chatservice.config.UserContext;
 import com.documents.chatservice.dto.*;
 import com.documents.chatservice.entities.ChatMessage;
 import com.documents.chatservice.entities.ChatSession;
@@ -12,14 +10,10 @@ import com.documents.chatservice.repositories.ChatSessionRepository;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -28,12 +22,9 @@ public class ChatService {
 
     private final ChatSessionRepository sessionRepository;
     private final ChatMessageRepository messageRepository;
-    private final UserServiceClient userServiceClient;
-    private final DocumentServiceClient documentServiceClient;
-    private final LlmServiceClient llmServiceClient;
+    private final AsyncLlmService asyncLlmService;
 
-    @Value("${app.similar-chunks:5}")
-    private int similarChunks;
+    private static final String PENDING_CONTENT = "__PENDING__";
 
     public ChatSessionDto createSession(Long userId, CreateSessionRequest request) {
         ChatSession session = ChatSession.builder()
@@ -75,49 +66,42 @@ public class ChatService {
                 .build();
         messageRepository.save(userMessage);
 
-        // 2. Recupera la config LLM dell'utente
-        Map<String, Object> llmConfig = userServiceClient.getActiveLlmConfig(userId);
-
-        // 3. Cerca chunk rilevanti nei documenti
-        List<Map<String, Object>> chunks = documentServiceClient.searchChunks(
-                request.getMessage(), userId, similarChunks);
-
-        // 4. Costruisci il contesto dai chunk
-        String context = chunks.stream()
-                .map(chunk -> (String) chunk.get("content"))
-                .collect(Collectors.joining("\n\n---\n\n"));
-
-        // 5. Prepara la richiesta per il LLM Service
-        Map<String, Object> llmRequest = new HashMap<>();
-        llmRequest.put("provider", llmConfig.get("provider"));
-        llmRequest.put("model", llmConfig.get("modelName"));
-        llmRequest.put("api_key", llmConfig.get("apiKey"));
-        llmRequest.put("base_url", llmConfig.get("ollamaUrl"));
-        llmRequest.put("prompt", request.getMessage());
-        llmRequest.put("temperature", llmConfig.getOrDefault("temperature", 0.7));
-        llmRequest.put("stream", false);
-
-        if (!context.isBlank()) {
-            llmRequest.put("context", context);
-        }
-
-        // 6. Chiama il LLM Service
-        String responseContent = llmServiceClient.generate(llmRequest);
-
-        // 7. Salva la risposta dell'assistente
-        ChatMessage assistantMessage = ChatMessage.builder()
+        // 2. Salva un messaggio assistant PENDING (placeholder)
+        ChatMessage pendingMessage = ChatMessage.builder()
                 .sessionId(session.getId())
                 .role(MessageRole.ASSISTANT)
-                .content(responseContent)
+                .content(PENDING_CONTENT)
                 .createdAt(LocalDateTime.now())
                 .build();
-        messageRepository.save(assistantMessage);
+        messageRepository.save(pendingMessage);
 
-        // 8. Aggiorna il timestamp della sessione
+        // 3. Cattura il contesto utente prima di passare al thread async
+        String userIdStr = UserContext.getUserId() != null ? UserContext.getUserId().toString() : userId.toString();
+        String username = UserContext.getUsername();
+        String roles = UserContext.getRoles();
+
+        // 4. Lancia l'elaborazione asincrona (embedding + RAG + LLM)
+        asyncLlmService.processMessage(
+                session.getId(),
+                pendingMessage.getId(),
+                request.getMessage(),
+                userId,
+                username,
+                roles
+        );
+
+        // 5. Ritorna subito il messaggio utente (il frontend farà polling per la risposta)
+        return toMessageDto(userMessage);
+    }
+
+    public ChatSessionDto updateSession(Long sessionId, Long userId, UpdateSessionRequest request) {
+        ChatSession session = sessionRepository.findByIdAndUserId(sessionId, userId)
+                .orElseThrow(() -> new RuntimeException("Sessione non trovata"));
+
+        session.setTitle(request.getTitle());
         session.setUpdatedAt(LocalDateTime.now());
-        sessionRepository.save(session);
-
-        return toMessageDto(assistantMessage);
+        session = sessionRepository.save(session);
+        return toSessionDto(session);
     }
 
     private ChatSessionDto toSessionDto(ChatSession session) {

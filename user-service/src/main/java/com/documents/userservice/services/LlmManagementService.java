@@ -20,10 +20,10 @@ public class LlmManagementService {
 
     @Transactional
     public LlmConfig save(LlmConfigDto llmConfigDto, User user) {
-        Boolean model = llmRepository.existsByUserIdAndProvider(user.getId(), llmConfigDto.getProvider());
-        if (model) {
-            throw new ProviderAlreadyExistsException(llmConfigDto.getProvider());
-        }
+//        Boolean model = llmRepository.existsByUserIdAndProvider(user.getId(), llmConfigDto.getProvider());
+//        if (model) {
+//            throw new ProviderAlreadyExistsException(llmConfigDto.getProvider());
+//        }
         LlmConfig llmconfig = LlmConfig.fromDto(llmConfigDto);
         llmconfig.setUserId(user.getId());
         return llmRepository.save(llmconfig);

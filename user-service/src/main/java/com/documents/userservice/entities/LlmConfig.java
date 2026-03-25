@@ -2,6 +2,7 @@ package com.documents.userservice.entities;
 
 import com.documents.userservice.dto.LlmConfigDto;
 import jakarta.persistence.*;
+import jakarta.validation.constraints.NotNull;
 import lombok.*;
 
 import java.time.LocalDateTime;
@@ -19,18 +20,24 @@ public class LlmConfig {
     private Long id;
 
     @Column(name = "user_id")
+    @NotNull
     private Long userId;
 
-    @Column(nullable = false)
-    private String provider;
+//    @Column(nullable = false)
+//    private String provider;
 
     @Column(name = "model_name", nullable = false)
+    @NotNull
     private String modelName;
 
-    private String ollamaUrl;
-    private String ollamaApi;
-    private String apiKey;
-    private String baseUrl;
+    @Column(name = "embedding_model", nullable = false)
+    @NonNull
+    private String embeddingModel;
+
+//    private String ollamaUrl;
+//    private String ollamaApi;
+//    private String apiKey;
+//    private String baseUrl;
     private Double temperature;
     private Boolean isActive;
 
@@ -39,14 +46,15 @@ public class LlmConfig {
 
     public static LlmConfig fromDto(LlmConfigDto llmConfigDto) {
         return LlmConfig.builder()
-                .provider(llmConfigDto.getProvider())
+//                .provider(llmConfigDto.getProvider())
                 .modelName(llmConfigDto.getModelName())
-                .ollamaApi(llmConfigDto.getOllamaApi())
-                .apiKey(llmConfigDto.getApiKey())
-                .baseUrl(llmConfigDto.getBaseUrl())
+                .embeddingModel(llmConfigDto.getEmbeddingModel())
+//                .ollamaApi(llmConfigDto.getOllamaApi())
+//                .apiKey(llmConfigDto.getApiKey())
+//                .baseUrl(llmConfigDto.getBaseUrl())
                 .temperature(llmConfigDto.getTemperature())
                 .isActive(llmConfigDto.getIsActive())
-                .ollamaUrl(llmConfigDto.getOllamaUrl())
+//                .ollamaUrl(llmConfigDto.getOllamaUrl())
                 .createdAt(LocalDateTime.now())
                 .build();
     }

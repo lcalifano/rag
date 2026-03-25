@@ -8,14 +8,15 @@ import lombok.*;
 @AllArgsConstructor
 @Builder
 public class LlmConfigDto {
-    @ModelProviderValidator
-    private String provider;
+//    @ModelProviderValidator
+//    private String provider;
 
     private String modelName;
-    private String ollamaUrl;
-    private String ollamaApi;
-    private String apiKey;
-    private String baseUrl;
+    private String embeddingModel;
+//    private String ollamaUrl;
+//    private String ollamaApi;
+//    private String apiKey;
+//    private String baseUrl;
     private Double temperature;
     private Boolean isActive;
 }

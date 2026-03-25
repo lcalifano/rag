@@ -9,4 +9,7 @@ import java.util.List;
 @Repository
 public interface ChatMessageRepository extends JpaRepository<ChatMessage, Long> {
     List<ChatMessage> findAllBySessionIdOrderByCreatedAtAsc(Long sessionId);
+
+    /** Ultimi N messaggi della sessione (ordinati dal più recente). */
+    List<ChatMessage> findTop10BySessionIdOrderByCreatedAtDesc(Long sessionId);
 }

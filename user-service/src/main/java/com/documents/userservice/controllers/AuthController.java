@@ -8,16 +8,24 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.Map;
 
 @RestController
 @RequestMapping("/auth")
 @RequiredArgsConstructor
 public class AuthController {
     private final AuthService authService;
+
+    /**
+     * Controlla se il sistema è già stato configurato (esiste almeno un utente).
+     * Endpoint pubblico, usato dal frontend per mostrare la pagina di setup.
+     */
+    @GetMapping("/setup-status")
+    public ResponseEntity<Map<String, Boolean>> setupStatus() {
+        return ResponseEntity.ok(Map.of("setupCompleted", authService.isSetupCompleted()));
+    }
 
     @PostMapping("/register")
     public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest request) {

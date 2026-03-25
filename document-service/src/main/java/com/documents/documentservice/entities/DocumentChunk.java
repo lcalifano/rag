@@ -26,6 +26,13 @@ public class DocumentChunk {
     @Column(columnDefinition = "TEXT", nullable = false)
     private String content;
 
+    // Embedding vettoriale per similarity search (pgvector).
+    // insertable/updatable = false: Hibernate non tocca questa colonna,
+    // la gestiamo esclusivamente via native query con cast esplicito a vector.
+    // nomic-embed-text produce vettori a 768 dimensioni.
+    @Column(name = "embedding", columnDefinition = "vector(768)", insertable = false, updatable = false)
+    private String embedding;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 }

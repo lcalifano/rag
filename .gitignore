@@ -74,6 +74,9 @@ application-local.yml
 application-secret*.yaml
 application-secret*.yml
 
+### Uploads ###
+uploads/
+
 ### Misc ###
 HELP.md
 ROADMAP.md
