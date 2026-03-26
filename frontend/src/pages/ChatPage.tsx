@@ -10,7 +10,10 @@ import type { ChatSession, ChatMessage } from '../types';
 
 export default function ChatPage() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
-  const [activeSession, setActiveSession] = useState<number | null>(null);
+  const [activeSession, setActiveSession] = useState<number | null>(() => {
+    const saved = localStorage.getItem('activeSession');
+    return saved ? Number(saved) : null;
+  });
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -22,7 +25,14 @@ export default function ChatPage() {
   const eventSourceRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
-    loadSessions();
+    loadSessions().then(() => {
+      // Ripristina la sessione attiva salvata
+      const saved = localStorage.getItem('activeSession');
+      if (saved) {
+        const sessionId = Number(saved);
+        handleSelectSession(sessionId);
+      }
+    });
     return () => closeEventSource();
   }, []);
 
@@ -44,6 +54,7 @@ export default function ChatPage() {
       const res = await createSession('Nuova chat');
       setSessions((prev) => [res.data, ...prev]);
       setActiveSession(res.data.id);
+      localStorage.setItem('activeSession', String(res.data.id));
       setMessages([]);
     } catch {
       /* ignore */
@@ -64,10 +75,15 @@ export default function ChatPage() {
     const es = new EventSource(`/api/chat/sessions/${sessionId}/stream?token=${token}`);
     eventSourceRef.current = es;
 
+    // Evento "connected": il server conferma che la connessione SSE è attiva
+    es.addEventListener('connected', () => {
+      console.log('SSE connesso per sessione', sessionId);
+    });
+
+    // Evento "message": la risposta del LLM è arrivata
     es.addEventListener('message', (event) => {
       const data = JSON.parse(event.data);
       setMessages((prev) => {
-        // Rimuovi eventuali messaggi PENDING e aggiungi la risposta
         const filtered = prev.filter((m) => m.content !== '__PENDING__');
         return [
           ...filtered,
@@ -98,7 +114,7 @@ export default function ChatPage() {
             setLoading(false);
           } else {
             // Riprova la connessione SSE
-            connectSse(sessionId);
+            setTimeout(() => connectSse(sessionId), 2000);
           }
         }).catch(() => { /* ignore */ });
       }
@@ -109,6 +125,7 @@ export default function ChatPage() {
     closeEventSource();
     setLoading(false);
     setActiveSession(sessionId);
+    localStorage.setItem('activeSession', String(sessionId));
     try {
       const res = await getHistory(sessionId);
       const msgs: ChatMessage[] = res.data;

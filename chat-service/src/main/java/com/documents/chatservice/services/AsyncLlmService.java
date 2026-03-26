@@ -49,14 +49,14 @@ public class AsyncLlmService {
             Collections.reverse(recentMessages);
 
             // 2. Compatta la storia per l'embedding contestuale
-            StringBuilder queryBuilder = new StringBuilder();
-            for (ChatMessage msg : recentMessages) {
-                queryBuilder.append(msg.getRole() == MessageRole.USER ? "Utente: " : "Assistente: ");
-                queryBuilder.append(msg.getContent()).append("\n");
-            }
-            String compactedQuery = queryBuilder.toString().trim();
+//            StringBuilder queryBuilder = new StringBuilder();
+//            for (ChatMessage msg : recentMessages) {
+//                queryBuilder.append(msg.getRole() == MessageRole.USER ? "Utente: " : "Assistente: ");
+//                queryBuilder.append(msg.getContent()).append("\n");
+//            }
+//            String compactedQuery = queryBuilder.toString().trim();
 
-            List<Double> queryEmbedding = llmServiceClient.getEmbeddings(List.of(compactedQuery)).get(0);
+            List<Double> queryEmbedding = llmServiceClient.getEmbeddings(List.of(userPrompt)).get(0);
             String queryEmbeddingStr = embeddingToString(queryEmbedding);
 
             // 3. Cerca chunk rilevanti passando gli header utente per auth service-to-service

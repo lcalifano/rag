@@ -49,7 +49,9 @@ def generate_response(request: GenerateRequest) -> str:
     messages = []
     if request.context:
         messages.append(SystemMessage(content=(
-            "Usa il seguente contesto per rispondere alla domanda dell'utente. "
+            "Usa il seguente contesto per rispondere alla domanda dell'utente, "
+            "dai più peso ai documenti rilevanti che alla chat. "
+            "Rispondi sempre nella lingua in cui è stato formulato il prompt"
             "Se il contesto non contiene informazioni rilevanti, rispondi basandoti "
             "sulle tue conoscenze.\n\n"
             f"Contesto:\n{request.context}"

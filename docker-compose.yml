@@ -101,7 +101,7 @@ services:
       DB_URL: jdbc:postgresql://postgres:5432/document_db
       LLM_SERVICE_URL: http://llm-service:8000
     volumes:
-      - ./uploads:/app/uploads:z
+      - document_data:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -126,7 +126,7 @@ services:
       - "8000:8000"
     environment:
       OLLAMA_BASE_URL: http://ollama:11434
-      CHAT_MODEL: llama3
+      CHAT_MODEL: qwen2.5:3b
       EMBEDDING_MODEL: nomic-embed-text
     depends_on:
       ollama:
@@ -141,4 +141,5 @@ services:
 
 volumes:
   postgres_data:
+  document_data:
   ollama_data:

@@ -40,7 +40,7 @@ public class AsyncEmbeddingService {
      * Processa il documento in modo asincrono: estrae testo, chunka, genera embeddings.
      * Riceve il documentId e il filename (non il MultipartFile, che non sopravvive al cambio di thread).
      */
-    @Async
+    @Async("documentUpload")
     @Transactional
     public void embedDocument(Long documentId, String filename) {
         // Re-fetch dell'entità nella transazione corrente (il document passato dal caller è detached)
