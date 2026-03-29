@@ -35,8 +35,18 @@ public class User implements UserDetails {
     private String email;
 
     @NotBlank(message = "Password cannot be blank")
-    @Column(nullable = false)
+//    @Column(nullable = false)
+    @Column(nullable = true)
     private String password;
+
+    @Column
+    private String provider;
+
+    @Column
+    private String providerId; // ID univoco dell'utente sul provider
+
+    @Column
+    private String avatarUrl;
 
     @ManyToMany(fetch = FetchType.EAGER, cascade = CascadeType.PERSIST)
     @JoinTable(
@@ -50,5 +60,10 @@ public class User implements UserDetails {
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
         return roles;
+    }
+
+    @Override
+    public String getPassword() {
+        return password != null ? password : "";
     }
 }

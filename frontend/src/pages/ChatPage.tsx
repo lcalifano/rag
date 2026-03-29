@@ -5,6 +5,7 @@ import {
   updateSession,
   getHistory,
   sendMessage,
+  getSseTicket,
 } from '../services/api';
 import type { ChatSession, ChatMessage } from '../types';
 
@@ -68,11 +69,18 @@ export default function ChatPage() {
     }
   }, []);
 
-  const connectSse = useCallback((sessionId: number) => {
+  const connectSse = useCallback(async (sessionId: number) => {
     closeEventSource();
 
-    const token = localStorage.getItem('token');
-    const es = new EventSource(`/api/chat/sessions/${sessionId}/stream?token=${token}`);
+    // Ottieni un ticket monouso (30 sec) per aprire SSE senza esporre il JWT nell'URL
+    let ticket: string;
+    try {
+      const res = await getSseTicket();
+      ticket = res.data.ticket;
+    } catch {
+      return;
+    }
+    const es = new EventSource(`/api/chat/sessions/${sessionId}/stream?ticket=${ticket}`);
     eventSourceRef.current = es;
 
     // Evento "connected": il server conferma che la connessione SSE è attiva

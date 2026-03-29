@@ -24,7 +24,7 @@ export default function RegisterPage() {
     setLoading(true);
     try {
       const res = await apiRegister(username, email, password);
-      login(res.data.token, res.data.username);
+      login(res.data.token, res.data.username, res.data.refreshToken);
       navigate('/');
     } catch (err: any) {
       setError(err.response?.data?.message || 'Errore nella registrazione');
