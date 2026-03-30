@@ -27,7 +27,7 @@ public class AsyncLlmService {
     private final ChatMessageRepository messageRepository;
     private final DocumentServiceClient documentServiceClient;
     private final LlmServiceClient llmServiceClient;
-    private final SseEmitterService sseEmitterService;
+    private final WebSocketSessionService webSocketSessionService;
 
     @Value("${app.similar-chunks:5}")
     private int similarChunks;
@@ -115,13 +115,15 @@ public class AsyncLlmService {
                 sessionRepository.save(session);
             });
 
-            // 8. Notifica il frontend via SSE
-            Map<String, Object> sseData = new HashMap<>();
-            sseData.put("messageId", pendingMessageId);
-            sseData.put("content", responseContent);
-            sseData.put("role", "ASSISTANT");
-            sseEmitterService.sendEvent(sessionId, "message", sseData);
-            sseEmitterService.completeEmitter(sessionId);
+            // 8. Notifica il frontend via WebSocket con la risposta del LLM.
+            // Il payload viene wrappato da WebSocketSessionService in { "event": "message", "data": {...} }
+            Map<String, Object> wsData = new HashMap<>();
+            wsData.put("messageId", pendingMessageId);
+            wsData.put("content", responseContent);
+            wsData.put("role", "ASSISTANT");
+            webSocketSessionService.sendMessage(sessionId, "message", wsData);
+            // Nota: il WebSocket rimane aperto — la connessione è persistente
+            // e il client la chiude quando lascia la sessione
 
             log.info("Elaborazione completata per sessione {} messaggio {}", sessionId, pendingMessageId);
 
@@ -136,14 +138,13 @@ public class AsyncLlmService {
                 messageRepository.save(pending);
             });
 
-            // Notifica l'errore via SSE
-            Map<String, Object> sseData = new HashMap<>();
-            sseData.put("messageId", pendingMessageId);
-            sseData.put("content", errorContent);
-            sseData.put("role", "ASSISTANT");
-            sseData.put("error", true);
-            sseEmitterService.sendEvent(sessionId, "message", sseData);
-            sseEmitterService.completeEmitter(sessionId);
+            // Notifica l'errore via WebSocket così il frontend può aggiornare la UI
+            Map<String, Object> wsData = new HashMap<>();
+            wsData.put("messageId", pendingMessageId);
+            wsData.put("content", errorContent);
+            wsData.put("role", "ASSISTANT");
+            wsData.put("error", true);
+            webSocketSessionService.sendMessage(sessionId, "message", wsData);
         }
     }
 

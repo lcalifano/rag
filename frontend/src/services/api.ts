@@ -93,7 +93,7 @@ export const refreshToken = (token: string) =>
 export const logout = () =>
   api.post('/auth/logout');
 
-// SSE Ticket — genera un ticket monouso per aprire EventSource senza JWT nell'URL
+// Genera un ticket monouso (30 sec) per aprire il WebSocket senza esporre il JWT nell'URL
 export const getSseTicket = () =>
   api.get<{ ticket: string }>('/auth/sse-ticket');
 

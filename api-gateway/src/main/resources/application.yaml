@@ -46,6 +46,16 @@ spring:
           predicates:
             - Path=/admin/**
 
+        - id: chat-ws-service
+          # lb:ws:// dice al gateway di fare proxy WebSocket con load balancing.
+          # Questa route deve stare PRIMA di chat-service altrimenti /ws/chat/**
+          # non verrebbe mai matchata (le route HTTP non gestiscono l'upgrade WS).
+          # Il JwtAuthenticationFilter intercetta l'handshake HTTP come una
+          # normale richiesta e valida il ticket ?ticket=xxx via Redis.
+          uri: lb:ws://CHAT-SERVICE
+          predicates:
+            - Path=/ws/chat/**
+
         - id: chat-service
           uri: lb://CHAT-SERVICE
           predicates:
