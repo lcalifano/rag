@@ -4,7 +4,6 @@ import {
   createSession,
   updateSession,
   getHistory,
-  sendMessage,
   getSseTicket,
 } from '../services/api';
 import type { ChatSession, ChatMessage } from '../types';
@@ -235,9 +234,9 @@ export default function ChatPage() {
   /**
    * Invia un messaggio:
    *  1. Aggiorna la UI immediatamente con il messaggio dell'utente
-   *  2. Spedisce il messaggio al server via REST POST
+   *  2. Spedisce il messaggio al server via WebSocket come JSON { "message": "..." }
    *     (il server salva PENDING e avvia l'elaborazione asincrona)
-   *  3. La risposta arriverà via WebSocket (già connesso da handleSelectSession)
+   *  3. La risposta arriverà sempre via WebSocket (stesso canale)
    */
   const handleSend = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -247,7 +246,7 @@ export default function ChatPage() {
     setInput('');
     if (inputRef.current) inputRef.current.style.height = 'auto';
 
-    // Mostra subito il messaggio dell'utente nella UI (ottimistic update)
+    // Mostra subito il messaggio dell'utente nella UI (optimistic update)
     setMessages((prev) => [
       ...prev,
       { id: Date.now(), role: 'USER', content: userMsg, createdAt: new Date().toISOString() },
@@ -259,10 +258,9 @@ export default function ChatPage() {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
         await connectWebSocket(activeSession);
       }
-      // Invia il messaggio al server — la risposta arriverà via WebSocket
-      await sendMessage(activeSession, userMsg);
+      // Invia il messaggio via WebSocket — formato JSON atteso dal backend
+      wsRef.current?.send(JSON.stringify({ message: userMsg }));
     } catch {
-      // In caso di errore REST mostra un messaggio di errore nella chat
       setMessages((prev) => [
         ...prev,
         {

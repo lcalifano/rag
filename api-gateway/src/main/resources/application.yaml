@@ -47,11 +47,11 @@ spring:
             - Path=/admin/**
 
         - id: chat-ws-service
-          # lb:ws:// dice al gateway di fare proxy WebSocket con load balancing.
-          # Questa route deve stare PRIMA di chat-service altrimenti /ws/chat/**
-          # non verrebbe mai matchata (le route HTTP non gestiscono l'upgrade WS).
-          # Il JwtAuthenticationFilter intercetta l'handshake HTTP come una
-          # normale richiesta e valida il ticket ?ticket=xxx via Redis.
+          # lb:ws:// è necessario: il prefisso "lb:" attiva il load balancing
+          # via Eureka, "ws://" dice al WebsocketRoutingFilter di fare proxy
+          # WebSocket e di inoltrare l'header Upgrade al chat-service.
+          # Senza "ws://" il gateway tratta la richiesta come HTTP normale
+          # e strip l'header Upgrade, causando "invalid Upgrade header: null".
           uri: lb:ws://CHAT-SERVICE
           predicates:
             - Path=/ws/chat/**
