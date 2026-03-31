@@ -15,20 +15,6 @@ services:
       timeout: 5s
       retries: 5
 
-  rabbitmq:
-    image: rabbitmq:3-management
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   eureka-server:
     build: ./eureka-server
     ports:
@@ -39,6 +25,16 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   api-gateway:
     build: ./api-gateway
     ports:
@@ -48,8 +44,11 @@ services:
       JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
       JWT_SECRET: ${JWT_SECRET}
       EUREKA_URL: http://eureka-server:8761/eureka/
+      REDIS_HOST: redis
     depends_on:
       eureka-server:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   user-service:
@@ -64,10 +63,13 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       EUREKA_URL: http://eureka-server:8761/eureka/
       DB_URL: jdbc:postgresql://postgres:5432/users_db
+      REDIS_HOST: redis
     depends_on:
       postgres:
         condition: service_healthy
       eureka-server:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   chat-service:

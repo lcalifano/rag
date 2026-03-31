@@ -13,11 +13,63 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Flag per evitare loop infinito di refresh
+let isRefreshing = false;
+let refreshSubscribers: ((token: string) => void)[] = [];
+
+function onRefreshed(token: string) {
+  refreshSubscribers.forEach((cb) => cb(token));
+  refreshSubscribers = [];
+}
+
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
+  async (error) => {
+    const originalRequest = error.config;
+
+    // Se 401 e non è già un retry, prova il refresh
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      const refreshToken = localStorage.getItem('refreshToken');
+
+      if (refreshToken) {
+        if (isRefreshing) {
+          // Un refresh è già in corso — accoda la richiesta
+          return new Promise((resolve) => {
+            refreshSubscribers.push((newToken: string) => {
+              originalRequest.headers.Authorization = `Bearer ${newToken}`;
+              resolve(api(originalRequest));
+            });
+          });
+        }
+
+        originalRequest._retry = true;
+        isRefreshing = true;
+
+        try {
+          const res = await axios.post('/api/auth/refresh', { refreshToken });
+          const { token: newToken, refreshToken: newRefreshToken } = res.data;
+          localStorage.setItem('token', newToken);
+          localStorage.setItem('refreshToken', newRefreshToken);
+          isRefreshing = false;
+          onRefreshed(newToken);
+
+          originalRequest.headers.Authorization = `Bearer ${newToken}`;
+          return api(originalRequest);
+        } catch {
+          isRefreshing = false;
+          refreshSubscribers = [];
+          // Refresh fallito — logout
+          localStorage.removeItem('token');
+          localStorage.removeItem('refreshToken');
+          localStorage.removeItem('username');
+          window.location.href = '/login';
+          return Promise.reject(error);
+        }
+      }
+
+      // Nessun refresh token — logout
       localStorage.removeItem('token');
+      localStorage.removeItem('refreshToken');
       localStorage.removeItem('username');
       window.location.href = '/login';
     }
@@ -34,6 +86,16 @@ export const login = (username: string, password: string) =>
 
 export const register = (username: string, email: string, password: string) =>
   api.post('/auth/register', { username, email, password });
+
+export const refreshToken = (token: string) =>
+  api.post('/auth/refresh', { refreshToken: token });
+
+export const logout = () =>
+  api.post('/auth/logout');
+
+// Genera un ticket monouso (30 sec) per aprire il WebSocket senza esporre il JWT nell'URL
+export const getSseTicket = () =>
+  api.get<{ ticket: string }>('/auth/sse-ticket');
 
 // User Profile
 export const getProfile = () => api.get('/users/me');

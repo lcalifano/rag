@@ -1,5 +1,6 @@
 server:
   port: 8081
+  forward-headers-strategy: framework
 
 spring:
   application:
@@ -13,10 +14,33 @@ spring:
     hibernate:
       ddl-auto: update
     show-sql: true
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: 6379
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: ${GOOGLE_CLIENT_ID}
+            client-secret: ${GOOGLE_CLIENT_SECRET}
+            scope: openid, profile, email
+            redirect-uri: "{baseUrl}/login/oauth2/code/{registrationId}"
+          github:
+            client-id: ${GITHUB_CLIENT_ID}
+            client-secret: ${GITHUB_CLIENT_SECRET}
+            scope: user:email, read:user
+            redirect-uri: "{baseUrl}/login/oauth2/code/{registrationId}"
+
+
+app:
+  frontend-url: ${FRONTEND_URL:http://localhost:5173}
 
 jwt:
   secret: ${JWT_SECRET:my-super-secret-key-that-is-at-least-256-bits-long-for-hmac-sha256}
-  expiration-ms: 86400000
+  expiration-ms: 900000
+  refresh-expiration-ms: 604800000
 
 eureka:
   client:

@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
+import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.reactive.ServerHttpRequest;
@@ -21,12 +22,16 @@ import java.util.List;
 public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
 
     private final JwtValidationService jwtValidationService;
+    private final ReactiveStringRedisTemplate redisTemplate;
 
     private static final List<String> OPEN_ENDPOINTS = List.of(
             "/auth/register",
             "/auth/login",
             "/auth/setup-status",
-            "/actuator"
+            "/auth/refresh",
+            "/actuator",
+            "/oauth2/authorization",
+            "/login/oauth2"
     );
 
     @Override
@@ -37,47 +42,83 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
             return chain.filter(exchange);
         }
 
+        // Fix 3: SSE ticket monouso — se c'è ?ticket=xxx lo validiamo via Redis
+        String ticket = exchange.getRequest().getQueryParams().getFirst("ticket");
+        if (ticket != null && !ticket.isBlank()) {
+            return handleSseTicket(ticket, exchange, chain);
+        }
+
+        // Fix 2: Bearer JWT con blacklist Redis
         String authHeader = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
-
-        // Supporto token via query parameter per SSE (EventSource non supporta headers custom)
-        String token = null;
-        if (authHeader != null && authHeader.startsWith("Bearer ")) {
-            token = authHeader.substring(7);
-        } else {
-            String queryToken = exchange.getRequest().getQueryParams().getFirst("token");
-            if (queryToken != null && !queryToken.isBlank()) {
-                token = queryToken;
-            }
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            return unauthorized(exchange);
         }
 
-        if (token == null) {
-            exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
-            return exchange.getResponse().setComplete();
-        }
+        String token = authHeader.substring(7);
 
         try {
             if (!jwtValidationService.isTokenValid(token)) {
-                exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
-                return exchange.getResponse().setComplete();
+                return unauthorized(exchange);
             }
 
-            String username = jwtValidationService.extractUsername(token);
-            Long userId = jwtValidationService.extractUserId(token);
-            List<String> roles = jwtValidationService.extractRoles(token);
+            String jti = jwtValidationService.extractJti(token);
 
-            ServerHttpRequest modifiedRequest = exchange.getRequest().mutate()
-                    .header("X-User-Id", String.valueOf(userId))
-                    .header("X-User-Username", username)
-                    .header("X-User-Roles", String.join(",", roles))
-                    .build();
-
-            return chain.filter(exchange.mutate().request(modifiedRequest).build());
+            // Controlla blacklist Redis prima di procedere
+            return redisTemplate.hasKey("blacklist:" + jti)
+                    .flatMap(blacklisted -> {
+                        if (Boolean.TRUE.equals(blacklisted)) {
+                            return unauthorized(exchange);
+                        }
+                        return proceedWithToken(token, exchange, chain);
+                    });
 
         } catch (Exception e) {
             log.error("JWT validation failed: {}", e.getMessage());
-            exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
-            return exchange.getResponse().setComplete();
+            return unauthorized(exchange);
         }
+    }
+
+    // Valida il ticket SSE monouso da Redis — getAndDelete è atomico
+    private Mono<Void> handleSseTicket(String ticket, ServerWebExchange exchange, GatewayFilterChain chain) {
+        String redisKey = "sse_ticket:" + ticket;
+        return redisTemplate.opsForValue().getAndDelete(redisKey)
+                .flatMap(value -> {
+                    if (value == null) {
+                        log.warn("SSE ticket non valido o già usato: {}", ticket);
+                        return unauthorized(exchange);
+                    }
+                    // value = "userId|username|roles"
+                    String[] parts = value.split("\\|", 3);
+                    if (parts.length < 3) {
+                        return unauthorized(exchange);
+                    }
+                    ServerHttpRequest modifiedRequest = exchange.getRequest().mutate()
+                            .header("X-User-Id", parts[0])
+                            .header("X-User-Username", parts[1])
+                            .header("X-User-Roles", parts[2])
+                            .build();
+                    return chain.filter(exchange.mutate().request(modifiedRequest).build());
+                })
+                .switchIfEmpty(Mono.defer(() -> unauthorized(exchange)));
+    }
+
+    private Mono<Void> proceedWithToken(String token, ServerWebExchange exchange, GatewayFilterChain chain) {
+        String username = jwtValidationService.extractUsername(token);
+        Long userId = jwtValidationService.extractUserId(token);
+        List<String> roles = jwtValidationService.extractRoles(token);
+
+        ServerHttpRequest modifiedRequest = exchange.getRequest().mutate()
+                .header("X-User-Id", String.valueOf(userId))
+                .header("X-User-Username", username)
+                .header("X-User-Roles", String.join(",", roles))
+                .build();
+
+        return chain.filter(exchange.mutate().request(modifiedRequest).build());
+    }
+
+    private Mono<Void> unauthorized(ServerWebExchange exchange) {
+        exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
+        return exchange.getResponse().setComplete();
     }
 
     private boolean isOpenEndpoint(String path) {

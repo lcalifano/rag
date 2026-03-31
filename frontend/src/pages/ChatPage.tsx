@@ -4,7 +4,7 @@ import {
   createSession,
   updateSession,
   getHistory,
-  sendMessage,
+  getSseTicket,
 } from '../services/api';
 import type { ChatSession, ChatMessage } from '../types';
 
@@ -22,18 +22,19 @@ export default function ChatPage() {
   const [titleInput, setTitleInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const eventSourceRef = useRef<EventSource | null>(null);
+  // Ref alla connessione WebSocket attiva (una per sessione, persistente)
+  const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     loadSessions().then(() => {
-      // Ripristina la sessione attiva salvata
+      // Ripristina la sessione attiva salvata nel localStorage
       const saved = localStorage.getItem('activeSession');
       if (saved) {
-        const sessionId = Number(saved);
-        handleSelectSession(sessionId);
+        handleSelectSession(Number(saved));
       }
     });
-    return () => closeEventSource();
+    // Alla smontatura del componente chiude il WebSocket se aperto
+    return () => closeWebSocket();
   }, []);
 
   useEffect(() => {
@@ -56,93 +57,187 @@ export default function ChatPage() {
       setActiveSession(res.data.id);
       localStorage.setItem('activeSession', String(res.data.id));
       setMessages([]);
+      // Apre subito il WebSocket per la nuova sessione così è pronto
+      // a ricevere la risposta del LLM non appena l'utente invia il primo messaggio
+      connectWebSocket(res.data.id);
     } catch {
       /* ignore */
     }
   };
 
-  const closeEventSource = useCallback(() => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
+  /**
+   * Chiude la connessione WebSocket corrente se esiste.
+   * Chiamata quando si cambia sessione o si smonta il componente.
+   */
+  const closeWebSocket = useCallback(() => {
+    if (wsRef.current) {
+      // Nullifica tutti gli handler PRIMA di chiudere, così l'evento onclose
+      // del vecchio WebSocket non scatena la logica di riconnessione.
+      // Senza questo, chiudere un WS in stato CONNECTING produce wasClean=false
+      // che fa partire getHistory → connectWebSocket → loop infinito di richieste.
+      wsRef.current.onopen = null;
+      wsRef.current.onmessage = null;
+      wsRef.current.onclose = null;
+      wsRef.current.onerror = null;
+      if (wsRef.current.readyState === WebSocket.OPEN ||
+          wsRef.current.readyState === WebSocket.CONNECTING) {
+        wsRef.current.close();
+      }
+      wsRef.current = null;
     }
   }, []);
 
-  const connectSse = useCallback((sessionId: number) => {
-    closeEventSource();
+  /**
+   * Apre una connessione WebSocket persistente per la sessione indicata.
+   *
+   * Flusso autenticazione:
+   *  1. Richiede un ticket monouso (30 sec) all'endpoint /auth/sse-ticket
+   *  2. Il ticket viene passato come query param ?ticket=xxx
+   *  3. Il gateway legge il ticket da Redis (getAndDelete, atomico),
+   *     estrae userId|username|roles e li inietta come header X-User-*
+   *  4. Il WebSocketAuthInterceptor lato chat-service li legge e li salva
+   *     negli attributi della sessione WebSocket
+   *
+   * La connessione rimane aperta finché l'utente non cambia sessione
+   * o lascia la pagina. Non serve riaprirla ad ogni messaggio.
+   */
+  const connectWebSocket = useCallback(async (sessionId: number) => {
+    // Chiude eventuale connessione precedente (es. cambio sessione)
+    closeWebSocket();
 
-    const token = localStorage.getItem('token');
-    const es = new EventSource(`/api/chat/sessions/${sessionId}/stream?token=${token}`);
-    eventSourceRef.current = es;
+    // Ottieni un ticket monouso per l'autenticazione — non si può passare
+    // il JWT direttamente nell'header perché il browser non lo permette
+    // per le connessioni WebSocket native
+    let ticket: string;
+    try {
+      const res = await getSseTicket();
+      ticket = res.data.ticket;
+    } catch {
+      console.error('Impossibile ottenere il ticket WebSocket');
+      return;
+    }
 
-    // Evento "connected": il server conferma che la connessione SSE è attiva
-    es.addEventListener('connected', () => {
-      console.log('SSE connesso per sessione', sessionId);
-    });
+    // Costruisce l'URL WebSocket usando il protocollo corretto (ws/wss)
+    // e il path che il gateway instraderà al chat-service
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/api/ws/chat/sessions/${sessionId}?ticket=${ticket}`;
 
-    // Evento "message": la risposta del LLM è arrivata
-    es.addEventListener('message', (event) => {
-      const data = JSON.parse(event.data);
-      setMessages((prev) => {
-        const filtered = prev.filter((m) => m.content !== '__PENDING__');
-        return [
-          ...filtered,
-          {
-            id: data.messageId,
-            role: data.role,
-            content: data.content,
-            createdAt: new Date().toISOString(),
-          },
-        ];
-      });
-      setLoading(false);
-      closeEventSource();
-    });
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
 
-    es.onerror = () => {
-      // SSE disconnesso — potrebbe essere un timeout o errore di rete.
-      // Fallback: ricarica la history per sincronizzarsi
-      closeEventSource();
-      if (sessionId) {
-        getHistory(sessionId).then((res) => {
-          const msgs: ChatMessage[] = res.data;
-          setMessages(msgs);
-          const hasPending = msgs.some(
-            (m) => m.role === 'ASSISTANT' && m.content === '__PENDING__'
-          );
-          if (!hasPending) {
-            setLoading(false);
-          } else {
-            // Riprova la connessione SSE
-            setTimeout(() => connectSse(sessionId), 2000);
-          }
-        }).catch(() => { /* ignore */ });
+    ws.onopen = () => {
+      console.log('WebSocket connesso per sessione', sessionId);
+    };
+
+    /**
+     * Gestisce i messaggi in arrivo dal server.
+     * Il server invia un JSON con struttura: { "event": "...", "data": {...} }
+     *  - event "connected": conferma apertura canale (ignorato nella UI)
+     *  - event "message":   risposta del LLM pronta, aggiorna la chat
+     */
+    ws.onmessage = (event) => {
+      try {
+        const envelope = JSON.parse(event.data) as { event: string; data: unknown };
+
+        if (envelope.event === 'message') {
+          const data = envelope.data as {
+            messageId: number;
+            role: 'USER' | 'ASSISTANT' | 'SYSTEM';
+            content: string;
+            error?: boolean;
+          };
+          // Rimuove il messaggio PENDING e aggiunge la risposta definitiva
+          setMessages((prev) => {
+            const filtered = prev.filter((m) => m.content !== '__PENDING__');
+            return [
+              ...filtered,
+              {
+                id: data.messageId,
+                role: data.role,
+                content: data.content,
+                createdAt: new Date().toISOString(),
+              },
+            ];
+          });
+          setLoading(false);
+        }
+      } catch {
+        console.error('Errore parsing messaggio WebSocket:', event.data);
       }
     };
-  }, [closeEventSource]);
 
+    /**
+     * Gestisce la chiusura inattesa della connessione.
+     * Fa fallback al polling della history per sincronizzare lo stato
+     * nel caso in cui la risposta del LLM fosse già arrivata.
+     */
+    ws.onclose = (event) => {
+      // Chiusura normale (es. cambio sessione): nessun fallback necessario
+      if (event.wasClean) return;
+
+      console.warn('WebSocket chiuso inaspettatamente, fallback su history');
+      getHistory(sessionId).then((res) => {
+        const msgs: ChatMessage[] = res.data;
+        setMessages(msgs);
+        // Se non c'è più nessun PENDING il LLM ha già risposto — stop loading
+        const hasPending = msgs.some(
+          (m) => m.role === 'ASSISTANT' && m.content === '__PENDING__'
+        );
+        if (!hasPending) {
+          setLoading(false);
+        }
+        // Se c'è ancora un PENDING il LLM sta ancora elaborando: riconnetti
+        else {
+          setTimeout(() => connectWebSocket(sessionId), 2000);
+        }
+      }).catch(() => setLoading(false));
+    };
+
+    ws.onerror = (err) => {
+      console.error('WebSocket errore:', err);
+    };
+  }, [closeWebSocket]);
+
+  /**
+   * Seleziona una sessione di chat:
+   *  1. Chiude il WebSocket della sessione precedente
+   *  2. Carica la history dal DB
+   *  3. Apre un nuovo WebSocket per la sessione selezionata
+   *     (connessione persistente attiva per tutta la durata della sessione)
+   */
   const handleSelectSession = async (sessionId: number) => {
-    closeEventSource();
+    closeWebSocket();
     setLoading(false);
     setActiveSession(sessionId);
     localStorage.setItem('activeSession', String(sessionId));
+
     try {
       const res = await getHistory(sessionId);
       const msgs: ChatMessage[] = res.data;
       setMessages(msgs);
-      // Se c'e' un messaggio PENDING, connetti SSE
+
+      // Apre il WebSocket per ricevere la risposta del LLM in push.
+      // Se c'è già un messaggio PENDING attiva anche il loading indicator.
       const hasPending = msgs.some(
         (m) => m.role === 'ASSISTANT' && m.content === '__PENDING__'
       );
-      if (hasPending) {
-        setLoading(true);
-        connectSse(sessionId);
-      }
+      if (hasPending) setLoading(true);
+
+      // Il WebSocket viene aperto sempre quando si entra in una sessione,
+      // indipendentemente dal PENDING, così è pronto per i messaggi futuri
+      connectWebSocket(sessionId);
     } catch {
       /* ignore */
     }
   };
 
+  /**
+   * Invia un messaggio:
+   *  1. Aggiorna la UI immediatamente con il messaggio dell'utente
+   *  2. Spedisce il messaggio al server via WebSocket come JSON { "message": "..." }
+   *     (il server salva PENDING e avvia l'elaborazione asincrona)
+   *  3. La risposta arriverà sempre via WebSocket (stesso canale)
+   */
   const handleSend = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!input.trim() || !activeSession || loading) return;
@@ -150,6 +245,8 @@ export default function ChatPage() {
     const userMsg = input;
     setInput('');
     if (inputRef.current) inputRef.current.style.height = 'auto';
+
+    // Mostra subito il messaggio dell'utente nella UI (optimistic update)
     setMessages((prev) => [
       ...prev,
       { id: Date.now(), role: 'USER', content: userMsg, createdAt: new Date().toISOString() },
@@ -157,11 +254,13 @@ export default function ChatPage() {
     setLoading(true);
 
     try {
-      // Connetti SSE PRIMA di inviare il messaggio, per non perdere eventi
-      connectSse(activeSession);
-      await sendMessage(activeSession, userMsg);
+      // Se il WebSocket non è connesso (es. timeout di inattività), lo riapre
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+        await connectWebSocket(activeSession);
+      }
+      // Invia il messaggio via WebSocket — formato JSON atteso dal backend
+      wsRef.current?.send(JSON.stringify({ message: userMsg }));
     } catch {
-      closeEventSource();
       setMessages((prev) => [
         ...prev,
         {

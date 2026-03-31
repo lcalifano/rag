@@ -26,6 +26,10 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/actuator/**").permitAll()
+                        // L'handshake WebSocket è autenticato da WebSocketAuthInterceptor
+                        // tramite gli header X-User-* iniettati dal gateway.
+                        // Spring Security non deve interferire con l'upgrade del protocollo.
+                        .requestMatchers("/ws/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(userContextFilter, UsernamePasswordAuthenticationFilter.class);

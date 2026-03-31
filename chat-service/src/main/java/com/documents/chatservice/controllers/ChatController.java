@@ -3,29 +3,33 @@ package com.documents.chatservice.controllers;
 import com.documents.chatservice.config.UserContext;
 import com.documents.chatservice.dto.*;
 import com.documents.chatservice.services.ChatService;
-import com.documents.chatservice.services.SseEmitterService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
 
+/**
+ * Controller REST per la gestione delle sessioni e dei messaggi di chat.
+ *
+ * L'endpoint SSE /sessions/{id}/stream è stato rimosso: la notifica
+ * real-time della risposta del LLM avviene ora tramite WebSocket,
+ * gestito da ChatWebSocketHandler su /ws/chat/sessions/{id}.
+ *
+ * Il flusso rimane asincrono:
+ *  1. Il client apre una connessione WebSocket per la sessione attiva.
+ *  2. Il client invia il messaggio via POST /sessions/{id}/messages.
+ *  3. Il server elabora in modo asincrono (AsyncLlmService).
+ *  4. Il server spinge la risposta sul WebSocket quando pronta.
+ */
 @RestController
 @RequestMapping("/chat")
 @RequiredArgsConstructor
 public class ChatController {
 
     private final ChatService chatService;
-    private final SseEmitterService sseEmitterService;
-
-    @GetMapping(value = "/sessions/{sessionId}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter streamSession(@PathVariable Long sessionId) {
-        return sseEmitterService.createEmitter(sessionId);
-    }
 
     @PostMapping("/sessions")
     public ResponseEntity<ChatSessionDto> createSession(@RequestBody CreateSessionRequest request) {
@@ -39,6 +43,12 @@ public class ChatController {
         return ResponseEntity.ok(chatService.listSessions(userId));
     }
 
+    /**
+     * Riceve il messaggio dell'utente, salva immediatamente un messaggio
+     * PENDING segnaposto e avvia l'elaborazione asincrona del LLM.
+     * Ritorna subito senza aspettare la risposta del LLM.
+     * La risposta finale arriva al client via WebSocket.
+     */
     @PostMapping("/sessions/{sessionId}/messages")
     public ResponseEntity<ChatMessageDto> sendMessage(
             @PathVariable Long sessionId,

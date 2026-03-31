@@ -5,7 +5,7 @@ interface AuthContextType {
   username: string | null;
   roles: string[];
   isAdmin: boolean;
-  login: (token: string, username: string, roles?: string[]) => void;
+  login: (token: string, username: string, refreshToken?: string) => void;
   logout: () => void;
   setUsername: (username: string) => void;
 }
@@ -29,9 +29,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return token ? parseRolesFromToken(token) : [];
   });
 
-  const login = (token: string, username: string) => {
+  const login = (token: string, username: string, refreshToken?: string) => {
     localStorage.setItem('token', token);
     localStorage.setItem('username', username);
+    if (refreshToken) localStorage.setItem('refreshToken', refreshToken);
     const tokenRoles = parseRolesFromToken(token);
     setIsAuthenticated(true);
     setUsernameState(username);
@@ -40,6 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('refreshToken');
     localStorage.removeItem('username');
     setIsAuthenticated(false);
     setUsernameState(null);

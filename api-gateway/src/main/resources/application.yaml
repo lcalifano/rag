@@ -4,12 +4,28 @@ server:
 spring:
   application:
     name: API-GATEWAY
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: 6379
   cloud:
     gateway:
       httpclient:
         connect-timeout: 10000
         response-timeout: 300s
+      forwarded:
+        enabled: true
       routes:
+        - id: oauth2-authorization
+          uri: lb://USER-SERVICE
+          predicates:
+            - Path=/oauth2/authorization/**
+
+        - id: oauth2-callback
+          uri: lb://USER-SERVICE
+          predicates:
+            - Path=/login/oauth2/code/**
+
         - id: auth-service
           uri: lb://USER-SERVICE
           predicates:
@@ -29,6 +45,16 @@ spring:
           uri: lb://USER-SERVICE
           predicates:
             - Path=/admin/**
+
+        - id: chat-ws-service
+          # lb:ws:// è necessario: il prefisso "lb:" attiva il load balancing
+          # via Eureka, "ws://" dice al WebsocketRoutingFilter di fare proxy
+          # WebSocket e di inoltrare l'header Upgrade al chat-service.
+          # Senza "ws://" il gateway tratta la richiesta come HTTP normale
+          # e strip l'header Upgrade, causando "invalid Upgrade header: null".
+          uri: lb:ws://CHAT-SERVICE
+          predicates:
+            - Path=/ws/chat/**
 
         - id: chat-service
           uri: lb://CHAT-SERVICE

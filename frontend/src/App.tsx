@@ -11,6 +11,7 @@ import DocumentsPage from './pages/DocumentsPage';
 import ProfilePage from './pages/ProfilePage';
 import AdminPage from './pages/AdminPage';
 import SettingsPage from './pages/SettingsPage';
+import OAuth2CallbackPage from './pages/OAuth2CallbackPage';
 
 function App() {
   return (
@@ -21,6 +22,7 @@ function App() {
           <Route path="/setup" element={<SetupPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/oauth2/callback" element={<OAuth2CallbackPage />} />
           <Route
             element={
               <ProtectedRoute>

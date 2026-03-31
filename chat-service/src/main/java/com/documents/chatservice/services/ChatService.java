@@ -7,6 +7,7 @@ import com.documents.chatservice.entities.ChatSession;
 import com.documents.chatservice.entities.MessageRole;
 import com.documents.chatservice.repositories.ChatMessageRepository;
 import com.documents.chatservice.repositories.ChatSessionRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,6 +24,7 @@ public class ChatService {
     private final ChatSessionRepository sessionRepository;
     private final ChatMessageRepository messageRepository;
     private final AsyncLlmService asyncLlmService;
+    private final ObjectMapper objectMapper;
 
     private static final String PENDING_CONTENT = "__PENDING__";
 
@@ -92,6 +94,64 @@ public class ChatService {
 
         // 5. Ritorna subito il messaggio utente (il frontend farà polling per la risposta)
         return toMessageDto(userMessage);
+    }
+
+    /**
+     * Riceve un messaggio dal WebSocket. A differenza di sendMessage() che ricava
+     * username/roles dal UserContext (ThreadLocal popolato dal filtro HTTP),
+     * qui li riceviamo come parametri perché provengono dagli attributi della
+     * sessione WebSocket — il filtro HTTP non gira per i messaggi WS.
+     *
+     * @param sessionId  id della chat-session
+     * @param userId     id dell'utente (dagli attributi WS)
+     * @param username   username (dagli attributi WS)
+     * @param roles      ruoli CSV (dagli attributi WS)
+     * @param rawPayload JSON grezzo dal client: { "message": "testo" }
+     */
+    public void sendMessageFromWebSocket(Long sessionId, Long userId,
+                                         String username, String roles,
+                                         String rawPayload) {
+        // Estrae il campo "message" dal JSON inviato dal client
+        String content;
+        try {
+            content = objectMapper.readTree(rawPayload).get("message").asText();
+        } catch (Exception e) {
+            log.warn("Payload WS non valido: {}", rawPayload);
+            return;
+        }
+
+        ChatSession session = sessionRepository.findByIdAndUserId(sessionId, userId)
+                .orElseThrow(() -> new RuntimeException("Sessione non trovata"));
+
+        // 1. Salva il messaggio dell'utente
+        ChatMessage userMessage = ChatMessage.builder()
+                .sessionId(session.getId())
+                .role(MessageRole.USER)
+                .content(content)
+                .createdAt(LocalDateTime.now())
+                .build();
+        messageRepository.save(userMessage);
+
+        // 2. Salva un messaggio assistant PENDING (placeholder)
+        ChatMessage pendingMessage = ChatMessage.builder()
+                .sessionId(session.getId())
+                .role(MessageRole.ASSISTANT)
+                .content(PENDING_CONTENT)
+                .createdAt(LocalDateTime.now())
+                .build();
+        messageRepository.save(pendingMessage);
+
+        // 3. Lancia l'elaborazione asincrona (embedding + RAG + LLM)
+        // username e roles vengono passati al thread async per il contesto
+        // service-to-service (DocumentServiceClient richiede X-User-* headers)
+        asyncLlmService.processMessage(
+                session.getId(),
+                pendingMessage.getId(),
+                content,
+                userId,
+                username,
+                roles
+        );
     }
 
     public ChatSessionDto updateSession(Long sessionId, Long userId, UpdateSessionRequest request) {

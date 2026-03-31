@@ -41,6 +41,10 @@ public class JwtValidationService {
         return extractAllClaims(token).get("roles", List.class);
     }
 
+    public String extractJti(String token) {
+        return extractAllClaims(token).get("jti", String.class);
+    }
+
     public boolean isTokenExpired(String token) {
         return extractAllClaims(token).getExpiration().before(new Date());
     }
