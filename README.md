@@ -2,7 +2,7 @@
 
 Applicazione **RAG** (Retrieval-Augmented Generation) basata su architettura a microservizi.
 Permette agli utenti di caricare documenti, generare embedding vettoriali e chattare con un LLM
-che utilizza il contenuto dei documenti come contesto. Le risposte arrivano in streaming tramite SSE.
+che utilizza il contenuto dei documenti come contesto. Le risposte arrivano in tempo reale tramite WebSocket.
 
 ---
 
@@ -12,21 +12,22 @@ che utilizza il contenuto dei documenti come contesto. Le risposte arrivano in s
 Browser
   │
   ▼
-Nginx (porta 3000 / 80)        ← SPA React + proxy verso Gateway
+Nginx (porta 3000 / 80)        ← SPA React + proxy HTTP/WebSocket verso Gateway
+  │
+  ├── /api/*     → HTTP proxy
+  ├── /api/ws/*  → WebSocket proxy (Upgrade + Connection)
   │
   ▼
 API Gateway (porta 8080)        ← JWT auth, Redis blacklist, routing
   │
   ├──▶ User Service (8081)      ← Auth, OAuth2, refresh token, config LLM
-  ├──▶ Chat Service (8082)      ← Sessioni chat, RAG, SSE
+  ├──▶ Chat Service (8082)      ← Sessioni chat, RAG, WebSocket
   └──▶ Document Service (8083)  ← Upload, chunking, embedding
               │
               ▼
         LLM Service (8000)      ← FastAPI, generazione testo ed embedding (Ollama)
 
 Tutti i servizi si registrano su Eureka Server (8761)
-Upload asincrono tramite RabbitMQ
-Short-lived JWT + Refresh Token + Redis token blacklist
 ```
 
 ---
@@ -38,150 +39,66 @@ Short-lived JWT + Refresh Token + Redis token blacklist
 | Java Services | Spring Boot 3.4.5, Java 21 |
 | Service Discovery | Spring Cloud Netflix Eureka |
 | API Gateway | Spring Cloud Gateway (WebFlux) |
-| Auth | Spring Security + JWT (JJWT 0.12) |
-| OAuth2 | Spring OAuth2 Client (Google, GitHub) |
+| Auth | Spring Security + JWT + OAuth2 (Google, GitHub) |
 | Token Management | Refresh Token Rotation + Redis Blacklist |
-| Cache / Session | Redis 7 |
 | Database | PostgreSQL 17 + pgvector |
-| Message Broker | RabbitMQ 3 |
+| Real-time | WebSocket (Spring WebSocket) |
 | LLM Service | Python 3.12, FastAPI, LangChain |
+| LLM Runtime | Ollama (default: `qwen2.5:3b`, embedding: `nomic-embed-text`) |
 | Frontend | React 18, TypeScript, Vite, Tailwind CSS v4 |
-| Container | Docker + Docker Compose |
-| Proxy | Nginx (SPA serving + API proxy) |
+| Infrastruttura | Docker Compose, Nginx, Redis 7 |
 
 ---
 
 ## Servizi
 
 ### Eureka Server — porta 8761
-Service registry. Tutti i microservizi si registrano al boot con il proprio nome logico
-(`USER-SERVICE`, `CHAT-SERVICE`, ecc.). Il gateway risolve i nomi via load balancing.
+Service registry. Tutti i microservizi si registrano al boot e il gateway risolve i nomi via load balancing.
 
 ### API Gateway — porta 8080
-Unico punto di ingresso. Ad ogni richiesta:
-1. Controlla se il path è pubblico (login, register, OAuth2)
-2. Valida il JWT (firma + scadenza)
-3. Controlla la blacklist Redis sul `jti` del token
-4. Oppure valida un SSE ticket monouso da Redis
-5. Inietta header `X-User-Id`, `X-User-Username`, `X-User-Roles`
-6. Instrada verso il servizio corretto
+Unico punto di ingresso. Valida JWT o ticket monouso (Redis), controlla la blacklist, inietta header `X-User-*` e instrada verso il servizio corretto.
 
-| Route | Servizio |
-|---|---|
-| `/auth/**` | User Service |
-| `/users/**` | User Service |
-| `/model/**` | User Service |
-| `/admin/**` | User Service |
-| `/oauth2/authorization/**` | User Service |
-| `/login/oauth2/code/**` | User Service |
-| `/chat/**` | Chat Service |
-| `/documents/**` | Document Service |
+| Route | Servizio | Protocollo |
+|---|---|---|
+| `/auth/**`, `/users/**`, `/model/**`, `/admin/**` | User Service | HTTP |
+| `/oauth2/**`, `/login/oauth2/**` | User Service | HTTP |
+| `/ws/chat/**` | Chat Service | WebSocket |
+| `/chat/**` | Chat Service | HTTP |
+| `/documents/**` | Document Service | HTTP |
 
 ### User Service — porta 8081
-Gestione utenti, autenticazione e configurazione LLM.
+Gestione utenti, autenticazione (locale + OAuth2 Google/GitHub) e configurazione LLM per utente.
 
-**Auth endpoints (pubblici):**
-- `POST /auth/register` — Registrazione
-- `POST /auth/login` — Login → `{ token (15min), refreshToken (7gg) }`
-- `POST /auth/refresh` — Rinnova access token tramite refresh token (rotation)
-- `GET /oauth2/authorization/google` — Avvia OAuth2 Google
-- `GET /oauth2/authorization/github` — Avvia OAuth2 GitHub
-
-**Auth endpoints (autenticati):**
-- `POST /auth/logout` — Invalida token (blacklist Redis) + revoca refresh token
-- `GET /auth/sse-ticket` — Genera ticket monouso 30s per aprire SSE
-
-**Altri:**
+- `POST /auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout`
+- `GET /auth/sse-ticket` — Ticket monouso (30s) per autenticazione WebSocket
 - `GET/PUT /users/me` — Profilo utente
 - `GET/PUT /admin/users` — Gestione utenti (admin)
 - `GET/POST /model/settings` — Configurazione provider LLM
 
 ### Chat Service — porta 8082
-Sessioni chat con pipeline RAG. Ad ogni messaggio:
-1. Genera l'embedding della domanda (LLM Service)
-2. Recupera i 5 chunk più simili dai documenti dell'utente (pgvector cosine similarity)
-3. Costruisce il prompt con il contesto trovato
-4. Chiama il LLM in modo asincrono (`@Async`)
-5. Pubblica la risposta tramite SSE all'EventSource del frontend
+Sessioni chat con pipeline RAG e comunicazione bidirezionale via WebSocket.
+
+Ad ogni messaggio: genera embedding della domanda → recupera chunk simili (pgvector) → costruisce prompt con contesto → chiama LLM async → invia risposta via WebSocket.
 
 - `POST /chat/sessions` — Crea sessione
 - `GET /chat/sessions` — Lista sessioni
-- `POST /chat/sessions/{id}/messages` — Invia messaggio (risposta via SSE)
-- `GET /chat/sessions/{id}/messages` — Storico
-- `GET /chat/sessions/{id}/stream` — Stream SSE (autenticato con `?ticket=`)
+- `GET /chat/sessions/{id}/messages` — Storico messaggi
+- `PUT /chat/sessions/{id}` — Aggiorna titolo
+- `ws:///ws/chat/sessions/{id}?ticket=<uuid>` — WebSocket bidirezionale
 
 ### Document Service — porta 8083
-Upload, parsing PDF, chunking e generazione embedding.
+Upload, parsing PDF, chunking e generazione embedding (elaborazione asincrona).
 
-- `POST /documents/upload` — Upload (max 50MB, elaborazione asincrona via RabbitMQ)
+- `POST /documents/upload` — Upload (max 50MB)
 - `GET /documents/` — Lista documenti utente
 - `DELETE /documents/{id}` — Elimina documento + chunk + embedding
 - `GET /documents/admin/all` — Tutti i documenti (admin)
 
-**Pipeline upload:**
-1. Salva il file su disco
-2. Pubblica messaggio su RabbitMQ
-3. Consumer estrae testo (PDFBox), divide in chunk (400 token, overlap 80)
-4. Per ogni chunk genera embedding tramite LLM Service
-5. Salva chunk + vettore in PostgreSQL (pgvector)
-
 ### LLM Service — porta 8000
-Servizio Python che astrae i provider LLM.
+Servizio Python che astrae i provider LLM (Ollama).
 
 - `POST /generate` — Generazione testo
 - `POST /embeddings` — Generazione embedding vettoriale
-
-**Provider supportati:**
-
-| Provider | Generazione | Embedding |
-|---|---|---|
-| Ollama (locale) | ✓ | ✓ |
-| OpenAI | ✓ | ✓ |
-| Anthropic | ✓ | — |
-
-Modello di default per CPU: `qwen2.5:3b` (embedding: `nomic-embed-text`).
-
----
-
-## Sicurezza
-
-### Flusso JWT completo
-
-```
-Login  →  access token (15 min, contiene jti UUID)
-       +  refresh token (7 giorni, salvato in DB)
-
-Chiamata normale  →  Authorization: Bearer <access_token>
-                 →  Gateway: verifica firma + controlla Redis blacklist su jti
-
-Token scaduto  →  Axios interceptor cattura 401
-               →  POST /auth/refresh con refresh token
-               →  nuovo access token + nuovo refresh token (rotation)
-               →  riprova la richiesta originale
-
-Logout  →  POST /auth/logout
-        →  jti → Redis blacklist (TTL = vita residua del token)
-        →  tutti i refresh token → revoked = true nel DB
-
-SSE  →  GET /auth/sse-ticket  (Bearer token)
-     →  ticket UUID salvato in Redis, TTL 30s
-     →  EventSource apre con ?ticket=<uuid>
-     →  Gateway: getAndDelete atomico → valida → apre stream
-```
-
-### OAuth2 Login
-
-I bottoni "Accedi con Google/GitHub" sulla pagina di login avviano l'Authorization Code Flow
-completo tramite il gateway. Dopo il consenso, il user-service:
-- trova o crea l'utente locale (collega l'account se l'email coincide con un utente esistente)
-- genera access token + refresh token
-- reindirizza su `/oauth2/callback?token=...&refreshToken=...&username=...`
-
-Redirect URI da registrare nelle console dei provider:
-```
-http://localhost/login/oauth2/code/google
-http://localhost/login/oauth2/code/github
-```
 
 ---
 
@@ -189,7 +106,6 @@ http://localhost/login/oauth2/code/github
 
 ### Prerequisiti
 - Docker e Docker Compose
-- Account Google e/o GitHub (opzionale, per OAuth2)
 
 ### 1. Configurazione `.env`
 
@@ -197,17 +113,6 @@ http://localhost/login/oauth2/code/github
 JWT_SECRET=<stringa-casuale-di-almeno-64-caratteri>
 DB_USERNAME=postgres
 DB_PASSWORD=<password-a-scelta>
-RABBITMQ_DEFAULT_USER=guest
-RABBITMQ_DEFAULT_PASS=<password-a-scelta>
-
-# Opzionale — OAuth2 (lascia vuoto se non usi il login sociale)
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
-GITHUB_CLIENT_ID=
-GITHUB_CLIENT_SECRET=
-
-# Opzionale — URL frontend in produzione
-FRONTEND_URL=http://localhost
 ```
 
 ### 2. Avvio
@@ -221,15 +126,6 @@ docker compose up --build
 Il primo utente che si registra riceve automaticamente il ruolo ADMIN.
 
 Vai su `http://localhost:3000` e registra il tuo account.
-
-### 4. Verifica servizi
-
-| URL | Servizio |
-|---|---|
-| http://localhost:3000 | Frontend React |
-| http://localhost:8761 | Eureka Dashboard |
-| http://localhost:15672 | RabbitMQ Management |
-| http://localhost:6379 | Redis (no UI, usa redis-cli) |
 
 ---
 
@@ -251,24 +147,17 @@ Tre database PostgreSQL separati, creati da `init-databases.sql`:
 ragapp/
 ├── docker-compose.yml
 ├── init-databases.sql
-├── pom.xml                      # Parent POM (aggregator per IDE)
-├── ROADMAP.md                   # Catalogo di tutti i concetti implementati
-├── security-fixes.md            # Log delle fix di sicurezza
 ├── eureka-server/
 ├── api-gateway/                 # Spring Cloud Gateway + JWT filter + Redis
 ├── user-service/                # Auth, OAuth2, refresh token
-├── chat-service/                # RAG, SSE, async LLM
+├── chat-service/                # RAG, WebSocket, async LLM
+│   └── src/.../
+│       ├── controllers/         # REST endpoints
+│       ├── websocket/           # ChatWebSocketHandler + AuthInterceptor
+│       ├── services/            # ChatService, AsyncLlmService, WebSocketSessionService
+│       └── config/              # WebSocketConfig, SecurityConfig, AsyncConfig
 ├── document-service/            # Upload, chunking, pgvector
-├── llm-service/                 # Python FastAPI
-│   └── app/
-│       ├── main.py
-│       ├── routers/
-│       └── services/
+├── llm-service/                 # Python FastAPI + LangChain + Ollama
 └── frontend/                    # React + TypeScript + Vite + Tailwind
-    ├── src/
-    │   ├── pages/
-    │   ├── components/
-    │   ├── contexts/
-    │   └── services/
-    └── nginx.conf               # Serve SPA + proxy verso Gateway
+    └── nginx.conf               # SPA serving + proxy HTTP/WebSocket
 ```
